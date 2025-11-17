@@ -1,4 +1,6 @@
 #include <iostream>
+#include <chrono>
+#include <ctime>
 #include <random>
 
 using namespace std;
@@ -54,11 +56,11 @@ int main(int argc, char *argv[]) {
 
   // --- Compute sizes ---
   // Vector dimension
-  int N = 3;
+  int N = 4092;
   int vec_size = N * sizeof(float);
 
   // Number of vectors
-  int M = 4;
+  int M = 4092;
   int vec_num_size = M * vec_size;
 
   // Vector to project
@@ -82,34 +84,47 @@ int main(int argc, char *argv[]) {
   cudaMalloc(&d_P, vec_num_size);
   float* d_O;
   cudaMalloc(&d_O, vec_num_size);
-  
-  // Copy host to GPU memory
-  cudaMemcpy(d_v, h_v, vec_size, cudaMemcpyHostToDevice);
-  cudaMemcpy(d_P, h_P, vec_num_size, cudaMemcpyHostToDevice);
 
   // Create dimensions
   dim3 gridDim(ceilDiv(M, 32), ceilDiv(N, 32), 1);
   dim3 blockDim(32, 32, 1);
 
+  // Copy host to GPU memory
+  cudaMemcpy(d_v, h_v, vec_size, cudaMemcpyHostToDevice);
+  cudaMemcpy(d_P, h_P, vec_num_size, cudaMemcpyHostToDevice);
+
+  // Measure start of kernel
+  cudaDeviceSynchronize();
+  auto start = chrono::system_clock::now();
+  time_t start_time = chrono::system_clock::to_time_t(start);
+  cout << "Projecting vectors started at " << ctime(&start_time) << endl;
+
   // Run projection
-  cout << "Projecting vectors" << endl;
   project<<<gridDim, blockDim>>>(N, M, d_v, d_P, d_O);
+
+  // Measure end of kernel
+  cudaDeviceSynchronize();
+  auto end = chrono::system_clock::now();
+  time_t end_time = chrono::system_clock::to_time_t(end);
+  cout << "Projecting vectors finished at " << ctime(&end_time) << endl;
+  chrono::duration<double> duration = end-start;
+  cout << "TOTAL TIME ELAPSED: " << duration.count() << endl;
 
   // Copy GPU to host memory
   cudaMemcpy(h_O, d_O, vec_num_size, cudaMemcpyDeviceToHost);
   
   // Print original vector
   cout << "Original vector: {";
-  for(int i = 0; i < N; i++) {
+  for(int i = 0; i < N && i < 10; i++) {
     cout << h_v[i] << ",";
   }
   cout << "}" << endl;
 
   // Print our dictionary vectors
   cout << "Dictionary vectors: " << endl;
-  for(int i = 0; i < M; i++) {
+  for(int i = 0; i < M && i < 10; i++) {
     cout << "Vector " << i << ": {";
-    for (int j = 0; j < N; j++) {
+    for (int j = 0; j < N && j < 10; j++) {
       cout << h_P[i*N + j] << ",";
     }
     cout << "}" << endl;
@@ -117,12 +132,30 @@ int main(int argc, char *argv[]) {
 
   // Print orthogonal complements
   cout << "Complement vectors: " << endl;
-  for(int i = 0; i < M; i++) {
+  for(int i = 0; i < M && i < 10; i++) {
     cout << "Vector " << i << ": {";
-    for (int j = 0; j < N; j++) {
+    for (int j = 0; j < N && j < 10; j++) {
       cout << h_O[i*N + j] << ",";
     }
     cout << "}" << endl;
+  }
+
+  // QA
+  int randIndex = rand() % M;
+  cout << "Spot checking vector " << randIndex << endl;
+  float dotProduct = 0.0;
+  bool pass = true;
+  for (int i = 0; i < N; i++) {
+    dotProduct += h_v[i] * h_P[randIndex * N + i];
+  }
+  for (int i = 0; i < N; i++) {
+    pass = pass && h_v[i] - dotProduct * h_P[randIndex * N + i];
+  }
+  if (pass) {
+    cout << "PASS!" << endl;
+  }
+  else {
+    cout << "FAILED!" << endl;
   }
 
   // GC
