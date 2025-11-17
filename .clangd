@@ -1,0 +1,2 @@
+CompileFlags:
+  Remove: [-rdc=*, -Xcompiler=*, --generate-code=*, --extended-lambda, -forward-unknown-to-host-compiler]
