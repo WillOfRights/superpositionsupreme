@@ -4,29 +4,63 @@
 #include <random>
 
 using namespace std;
+
+#define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
+
+template <const int BLOCKSIZE>
 // Take the orthogonal complement of a vector of dim N (v) onto M unit vectors of dim N (P) and output to O
 __global__ void project(int N, int M, const float *v, const float *P, float *O) {
 
-  const int BLOCKSIZE = 32;
-  // Take the complement from the projection of vector i
-  const int i = blockIdx.x * BLOCKSIZE + (threadIdx.x / BLOCKSIZE);
-  // In index j
-  const int j = blockIdx.y * BLOCKSIZE + (threadIdx.x % BLOCKSIZE);
+  // This block computes a BLOCKSIZE x BLOCKSIZE chunk of the output
+  const uint outputVecStart = blockIdx.x;
+  const uint outputDimStart = blockIdx.y;
 
-  if (i < M && j < N) {
-    // Compute the dot product
-    float dotProduct = 0.0;
-    for (int dotProductIndex = 0; dotProductIndex < N; dotProductIndex++) {
-      dotProduct += v[dotProductIndex] * P[i * N + dotProductIndex];
+  // Cached partial values of vectors in shared mem
+  __shared__ float vCache[BLOCKSIZE];
+  __shared__ float PCache[BLOCKSIZE * BLOCKSIZE];
+
+  // This thread computes a specific entry of that chunk
+  const uint threadVecOffset = threadIdx.x % BLOCKSIZE;
+  const uint threadDimOffset = threadIdx.x / BLOCKSIZE;
+
+  // Set pointers to starting positions
+  v += 0;
+  P += outputVecStart * BLOCKSIZE * N;
+  O += outputVecStart * BLOCKSIZE * N + outputDimStart * BLOCKSIZE;
+
+  // Floats that we want to remember for final output as we read through the data
+  float v_thread;
+  float p_thread;
+
+  float dotProduct = 0.0;
+  for (uint blockIdx = 0; blockIdx < CEIL_DIV(N, BLOCKSIZE); blockIdx++) {
+    // Populate cached memory per block on a per thread basis
+    PCache[threadVecOffset * BLOCKSIZE + threadDimOffset] = P[threadVecOffset * N + threadDimOffset];
+    if (threadVecOffset == 0) {
+      vCache[threadDimOffset] = v[threadDimOffset];
     }
 
-    // o = v - (v*p)p
-    O[i * N + j] = v[j] - dotProduct * P[i * N + j];
-  }
-}
+    // Store to local memory if needed
+    if (blockIdx == outputDimStart) {
+      v_thread = v[threadDimOffset];
+      p_thread = P[threadVecOffset * N + threadDimOffset];
+    }
 
-int ceilDiv(int x, int y) {
-  return 1 + ((x - 1) / y);
+    __syncthreads();
+    v += BLOCKSIZE;
+    P += BLOCKSIZE;
+
+    // Increment dot product
+    for (int i = 0; i < BLOCKSIZE; i++) {
+      dotProduct += PCache[threadVecOffset * BLOCKSIZE + i] * vCache[i];
+    }
+
+    // Wait until cache is free across threads
+    __syncthreads();
+  }
+
+  // o = v - (v*p)p
+  O[threadVecOffset * N + threadDimOffset] = v_thread - dotProduct * p_thread;
 }
 
 // Generate a test vector of size N
@@ -63,11 +97,11 @@ int main(int argc, char *argv[]) {
 
   // --- Compute sizes ---
   // Vector dimension
-  int N = 4092;
+  int N = 4096;
   int vec_size = N * sizeof(float);
 
   // Number of vectors
-  int M = 4092;
+  int M = 4096;
   int vec_num_size = M * vec_size;
 
   // Vector to project
@@ -93,7 +127,7 @@ int main(int argc, char *argv[]) {
   cudaMalloc(&d_O, vec_num_size);
 
   // Create dimensions
-  dim3 gridDim(ceilDiv(M, 32), ceilDiv(N, 32), 1);
+  dim3 gridDim(CEIL_DIV(M, 32), CEIL_DIV(N, 32), 1);
   dim3 blockDim(32 * 32);
 
   // Copy host to GPU memory
@@ -107,7 +141,7 @@ int main(int argc, char *argv[]) {
   cout << "Projecting vectors started at " << ctime(&start_time) << endl;
 
   // Run projection
-  project<<<gridDim, blockDim>>>(N, M, d_v, d_P, d_O);
+  project<32><<<gridDim, blockDim>>>(N, M, d_v, d_P, d_O);
 
   // Measure end of kernel
   cudaDeviceSynchronize();
