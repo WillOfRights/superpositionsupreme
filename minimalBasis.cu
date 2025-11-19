@@ -20,8 +20,8 @@ __global__ void project(int N, int M, const float *v, const float *P, float *O) 
   __shared__ float PCache[BLOCKSIZE * BLOCKSIZE];
 
   // This thread computes a specific entry of that chunk
-  const uint threadVecOffset = threadIdx.x % BLOCKSIZE;
-  const uint threadDimOffset = threadIdx.x / BLOCKSIZE;
+  const uint threadVecOffset = threadIdx.x / BLOCKSIZE;
+  const uint threadDimOffset = threadIdx.x % BLOCKSIZE;
 
   // Set pointers to starting positions
   v += 0;
