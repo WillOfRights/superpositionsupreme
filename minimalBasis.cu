@@ -7,10 +7,11 @@ using namespace std;
 // Take the orthogonal complement of a vector of dim N (v) onto M unit vectors of dim N (P) and output to O
 __global__ void project(int N, int M, const float *v, const float *P, float *O) {
 
+  const int BLOCKSIZE = 32;
   // Take the complement from the projection of vector i
-  const uint i = blockIdx.x * blockDim.x + threadIdx.x;
+  const int i = blockIdx.x * BLOCKSIZE + (threadIdx.x / BLOCKSIZE);
   // In index j
-  const uint j = blockIdx.y * blockDim.y + threadIdx.y;
+  const int j = blockIdx.y * BLOCKSIZE + (threadIdx.x % BLOCKSIZE);
 
   if (i < M && j < N) {
     // Compute the dot product
@@ -51,6 +52,12 @@ void normalizeVector(int N, float* vector) {
   }
 }
 
+// Compare for equality in double checking correctness
+static bool AreEqual(float f1,float f2) { 
+  float epsilon = 1e-06;
+  return abs(f1 - f2) <= epsilon;
+}
+
 int main(int argc, char *argv[]) {
   cout << "Initializing main function." << endl;
 
@@ -87,7 +94,7 @@ int main(int argc, char *argv[]) {
 
   // Create dimensions
   dim3 gridDim(ceilDiv(M, 32), ceilDiv(N, 32), 1);
-  dim3 blockDim(32, 32, 1);
+  dim3 blockDim(32 * 32);
 
   // Copy host to GPU memory
   cudaMemcpy(d_v, h_v, vec_size, cudaMemcpyHostToDevice);
@@ -148,14 +155,16 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < N; i++) {
     dotProduct += h_v[i] * h_P[randIndex * N + i];
   }
-  for (int i = 0; i < N; i++) {
-    pass = pass && h_v[i] - dotProduct * h_P[randIndex * N + i];
+  for (int i = 0; i < N && pass; i++) {
+    pass = AreEqual(h_v[i] - dotProduct * h_P[randIndex * N + i], h_O[randIndex * N + i])
+      && pass;
+    if (!pass) {
+      cout << "FAILED!" << endl;
+      cout << "Difference in dimension " << i << ": " << h_v[i] - dotProduct * h_P[randIndex * N + i] - h_O[randIndex * N + i] << endl;
+    }
   }
   if (pass) {
     cout << "PASS!" << endl;
-  }
-  else {
-    cout << "FAILED!" << endl;
   }
 
   // GC

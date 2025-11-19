@@ -10,6 +10,10 @@ build: build-folder
 run: build-folder
   @cd ./build && ./superpositionsupreme
 
+build-run: build run
+
+alias br:= build-run
+
 clean:
   @rm -rf ./build
   @echo "Cleaned build folder"
